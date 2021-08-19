@@ -68,7 +68,7 @@
 
 
 
-  <meta name="keywords" content="Hexo, NexT" />
+  <meta name="keywords" content="GO," />
 
 
 
@@ -79,17 +79,17 @@
 
 
 
-<meta name="description" content="当你与困难面对面时，等待你的是一个新发现">
+<meta name="description" content="介绍管道，保证线程安全，用于数据传递或者数据共享，属于先进先出的队列。实现 Channel 的结构并不神秘，本质上就是一个 mutex 锁加上一个环状缓存、 一个发送方队列和一个接收方队列 通信交互发送消息 持有锁 入队，拷贝要发送的数据 找到是否有正在阻塞的接收方，是则直接发送 找到是否有空余的缓存，是则存入 阻塞直到被唤醒   释放锁  接收消息 上锁 从缓存中出队，拷贝要接收的数据 如果 C">
 <meta property="og:type" content="article">
 <meta property="og:title" content="GO的channel">
 <meta property="og:url" content="http://example.com/2021/08/19/GO%E7%9A%84channel/index.html">
 <meta property="og:site_name" content="102er">
-<meta property="og:description" content="当你与困难面对面时，等待你的是一个新发现">
+<meta property="og:description" content="介绍管道，保证线程安全，用于数据传递或者数据共享，属于先进先出的队列。实现 Channel 的结构并不神秘，本质上就是一个 mutex 锁加上一个环状缓存、 一个发送方队列和一个接收方队列 通信交互发送消息 持有锁 入队，拷贝要发送的数据 找到是否有正在阻塞的接收方，是则直接发送 找到是否有空余的缓存，是则存入 阻塞直到被唤醒   释放锁  接收消息 上锁 从缓存中出队，拷贝要接收的数据 如果 C">
 <meta property="og:locale">
 <meta property="article:published_time" content="2021-08-19T06:29:21.000Z">
-<meta property="article:modified_time" content="2021-08-19T06:29:21.789Z">
+<meta property="article:modified_time" content="2021-08-19T07:40:50.657Z">
 <meta property="article:author" content="blossom">
-<meta property="article:tag" content="go,golang">
+<meta property="article:tag" content="GO">
 <meta name="twitter:card" content="summary">
 
 
@@ -320,7 +320,41 @@
       
 
       
-        
+        <h4 id="介绍"><a href="#介绍" class="headerlink" title="介绍"></a>介绍</h4><p>管道，保证线程安全，用于数据传递或者数据共享，属于先进先出的队列。实现 Channel 的结构并不神秘，本质上就是一个 <code>mutex</code> 锁加上一个环状缓存、 一个发送方队列和一个接收方队列</p>
+<h3 id="通信交互"><a href="#通信交互" class="headerlink" title="通信交互"></a>通信交互</h3><h4 id="发送消息"><a href="#发送消息" class="headerlink" title="发送消息"></a><strong>发送消息</strong></h4><ol>
+<li>持有锁</li>
+<li>入队，拷贝要发送的数据<ol>
+<li>找到是否有正在阻塞的接收方，是则直接发送</li>
+<li>找到是否有空余的缓存，是则存入</li>
+<li>阻塞直到被唤醒</li>
+</ol>
+</li>
+<li>释放锁</li>
+</ol>
+<h4 id="接收消息"><a href="#接收消息" class="headerlink" title="接收消息"></a><strong>接收消息</strong></h4><ol>
+<li>上锁</li>
+<li>从缓存中出队，拷贝要接收的数据<ol>
+<li>如果 Channel 已被关闭，且 Channel 没有数据，立刻返回</li>
+<li>如果存在正在阻塞的发送方，说明缓存已满，从缓存队头取一个数据，再复始一个阻塞的发送方</li>
+<li>否则，检查缓存，如果缓存中仍有数据，则从缓存中读取，读取过程会将队列中的数据拷贝一份到接收方的执行栈中</li>
+<li>没有能接受的数据，阻塞当前的接收方 Goroutine</li>
+</ol>
+</li>
+<li>解锁</li>
+</ol>
+<h3 id="通道关闭"><a href="#通道关闭" class="headerlink" title="通道关闭"></a>通道关闭</h3><h4 id="channel关闭后的读写"><a href="#channel关闭后的读写" class="headerlink" title="channel关闭后的读写"></a><strong>channel关闭后的读写</strong></h4><ul>
+<li>关闭后的channel，可以读数据，因为channel中，可能会有缓存数据存在</li>
+<li>关闭后的channel，如果再写数据，会引起panic异常，可以判断是否channel关闭，防止panic产生</li>
+<li>nil的channel读写都会阻塞，再次close会引起panic</li>
+</ul>
+<h4 id="关闭原则"><a href="#关闭原则" class="headerlink" title="关闭原则"></a>关闭原则</h4><p>一个常用的使用Go通道的原则是<strong>不要在数据接收方或者在有多个发送者的情况下关闭通道</strong>。 换句话说，我们只应该让一个通道唯一的发送者关闭此通道。</p>
+<ul>
+<li>情形一：M个接收者和一个发送者。发送者通过关闭用来传输数据的通道来传递发送结束信号</li>
+<li>情形二：一个接收者和N个发送者，此唯一接收者通过关闭一个额外的信号通道来通知发送者不要在发送数据了</li>
+<li>情形三：M个接收者和N个发送者。它们中的任何协程都可以让一个中间调解协程帮忙发出停止数据传送的信号</li>
+<li>情形四：“M个接收者和一个发送者”情形的一个变种：用来传输数据的通道的关闭请求由第三方发出</li>
+</ul>
+
       
     </div>
     
@@ -334,6 +368,12 @@
     
 
     <footer class="post-footer">
+      
+        <div class="post-tags">
+          
+            <a href="/tags/GO/" rel="tag"># GO</a>
+          
+        </div>
       
 
       
@@ -408,8 +448,17 @@
       
 
       
+        <ul class="sidebar-nav motion-element">
+          <li class="sidebar-nav-toc sidebar-nav-active" data-target="post-toc-wrap">
+            文章目录
+          </li>
+          <li class="sidebar-nav-overview" data-target="site-overview-wrap">
+            站点概览
+          </li>
+        </ul>
+      
 
-      <section class="site-overview-wrap sidebar-panel sidebar-panel-active">
+      <section class="site-overview-wrap sidebar-panel">
         <div class="site-overview">
           <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
             
@@ -441,7 +490,7 @@
               
               <div class="site-state-item site-state-tags">
                 <a href="/tags/index.html">
-                  <span class="site-state-item-count">2</span>
+                  <span class="site-state-item-count">3</span>
                   <span class="site-state-item-name">标签</span>
                 </a>
               </div>
@@ -464,6 +513,22 @@
         </div>
       </section>
 
+      
+      <!--noindex-->
+        <section class="post-toc-wrap motion-element sidebar-panel sidebar-panel-active">
+          <div class="post-toc">
+
+            
+              
+            
+
+            
+              <div class="post-toc-content"><ol class="nav"><li class="nav-item nav-level-4"><a class="nav-link" href="#%E4%BB%8B%E7%BB%8D"><span class="nav-number">1.</span> <span class="nav-text">介绍</span></a></li></ol></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E9%80%9A%E4%BF%A1%E4%BA%A4%E4%BA%92"><span class="nav-number"></span> <span class="nav-text">通信交互</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#%E5%8F%91%E9%80%81%E6%B6%88%E6%81%AF"><span class="nav-number">1.</span> <span class="nav-text">发送消息</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E6%8E%A5%E6%94%B6%E6%B6%88%E6%81%AF"><span class="nav-number">2.</span> <span class="nav-text">接收消息</span></a></li></ol></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E9%80%9A%E9%81%93%E5%85%B3%E9%97%AD"><span class="nav-number"></span> <span class="nav-text">通道关闭</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#channel%E5%85%B3%E9%97%AD%E5%90%8E%E7%9A%84%E8%AF%BB%E5%86%99"><span class="nav-number">1.</span> <span class="nav-text">channel关闭后的读写</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E5%85%B3%E9%97%AD%E5%8E%9F%E5%88%99"><span class="nav-number">2.</span> <span class="nav-text">关闭原则</span></a></li></ol></div>
+            
+
+          </div>
+        </section>
+      <!--/noindex-->
       
 
       
